@@ -151,7 +151,10 @@ export const register: Register = on => {
     await $.command.register({ name: 'radar', description: 'Open the Session Radar pane' })
     const id = await $.session.id()
     await update($, selfId, () => id)
-    if (await isInteractive($, e.surface)) await begin($, e.cwd)
+    // A respawned worker or a reload may start without a surface; an entry this
+    // session left says it was interactive.
+    const left = await $.store.get(KEY_PREFIX + id)
+    if (isEntry(left) || (await isInteractive($, e.surface))) await begin($, e.cwd)
     // A reload stops the poll; an open pane keeps refreshing.
     try {
       if ((await $.ui.panes()).some(p => p.id === PANE)) {

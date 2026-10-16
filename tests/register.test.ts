@@ -150,3 +150,10 @@ test('a turn started without prompt.submit still names the session', async ($, o
   await $.turn.start({ text: 'Recherchiere zu anthropic', turnId: 't1' } as never)
   expect(await dump($)).toMatch(/— repo: Recherchiere zu anthropic$/m)
 })
+
+test('a respawned worker without a surface keeps reporting a session it reported before', async ($, on) => {
+  const before = { v: 1, id: 'sess-1', title: 'repo: x', cwd: '/repo', status: 'idle', startedAt: 1, updatedAt: 1, heartbeat: Date.parse('2026-10-16T11:59:00Z') }
+  await start($, on, null, { 'session:sess-1': before })
+  await $.prompt.submit({ text: 'weiter' } as never)
+  expect(await dump($)).toMatch(/^sess-1 · working/m)
+})
