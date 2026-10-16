@@ -101,6 +101,15 @@ async function begin($: EngineInterface, cwd: string): Promise<void> {
   reportsFrom = cwd
   await pruneOld(storeOf($), now)
   await save($)
+  // A new session opens the pane, whichever way it starts reporting (start,
+  // a late attach, /clear); a respawn or reload leaves a closed pane closed.
+  if (!isEntry(left)) {
+    try {
+      await refresh($)
+      await $.ui.open({ id: PANE, title: PANE_TITLE })
+      startPolling($)
+    } catch {}
+  }
   beat?.cancel()
   beat = $.clock.every(HEARTBEAT_MS, () => {
     void (async () => {
@@ -158,12 +167,10 @@ export const register: Register = on => {
     // session left says it was interactive.
     const left = await $.store.get(KEY_PREFIX + id)
     if (isEntry(left) || (await isInteractive($, e.surface))) await begin($, e.cwd)
-    // A session that reports opens the pane as a tab of its own; a reload
-    // stops the poll, and this starts it again.
+    // A reload stops the poll; a pane still up keeps refreshing.
     try {
-      if (me || (await $.ui.panes()).some(p => p.id === PANE)) {
+      if ((await $.ui.panes()).some(p => p.id === PANE)) {
         await refresh($)
-        if (me) await $.ui.open({ id: PANE, title: PANE_TITLE })
         startPolling($)
       }
     } catch {}

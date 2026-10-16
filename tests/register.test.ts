@@ -23,6 +23,7 @@ async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', s
   on('session.end', async () => ({ sessionId }) as never)
   on('classic.SessionStart', async () => ({}) as never)
   on('ui.panes', async () => ({ value: [] }) as never)
+  on('session.attach', async (_$, e) => ({ clientId: e.clientId }) as never)
   on('ui.open', async (_$, e) => {
     opened.push(e.id)
     return { value: { isPlaced: true } } as never
@@ -207,5 +208,25 @@ test('the pane opens by itself in an interactive session', async ($, on) => {
 
 test('the pane stays closed in a session without a surface', async ($, on) => {
   await start($, on, null)
+  expect(opened).toEqual([])
+})
+
+test('the desktop attaching later starts reporting and opens the pane', async ($, on) => {
+  await start($, on, null)
+  expect(opened).toEqual([])
+  await $.session.attach({ surface: 'desktop', clientId: 'c1' } as never)
+  expect(await dump($)).toMatch(/^sess-1 · idle/m)
+  expect(opened).toEqual(['session-radar'])
+})
+
+test('a second client attaching does not open the pane again', async ($, on) => {
+  await start($, on)
+  await $.session.attach({ surface: 'mobile', clientId: 'c2' } as never)
+  expect(opened).toEqual(['session-radar'])
+})
+
+test('a respawn of a session that reported before does not reopen a closed pane', async ($, on) => {
+  const before = { v: 1, id: 'sess-1', title: 'repo: x', cwd: '/repo', status: 'idle', startedAt: 1, updatedAt: 1, heartbeat: Date.parse('2026-10-16T11:59:00Z') }
+  await start($, on, 'desktop', { 'session:sess-1': before })
   expect(opened).toEqual([])
 })
