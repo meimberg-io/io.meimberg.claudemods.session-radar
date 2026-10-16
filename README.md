@@ -34,7 +34,9 @@ Neue Sessions laden ihn danach automatisch, auch in der Desktop-App.
 
 ## Bedienung
 
-- `/radar` öffnet das Panel oder holt es nach vorn.
+- Das Panel öffnet sich in jeder neuen Session von selbst als Tab rechts.
+- **Öffnen ↗** auf einer Karte springt in der Desktop-App in diese Session.
+- `/radar` öffnet das Panel wieder oder holt es nach vorn.
 - `/radar dump` listet die gemeldeten Einträge als Text (zur Fehlersuche).
 
 ## Grenzen
@@ -44,7 +46,7 @@ Neue Sessions laden ihn danach automatisch, auch in der Desktop-App.
 - Hintergrundläufe (`claude -p`, SDK, geplante Tasks) melden sich nicht.
 - Eine Frage, die nur im Fließtext am Ende eines Turns steht, gilt als
   „Fertig“. Sie ist nicht sicher erkennbar.
-- Ein Klick auf eine Zeile springt nicht in die Session.
+- Springen geht nur zu Desktop-Sessions, nicht zu Terminal- oder IDE-Sessions.
 - Die Mod-API ist Early Access (getestet mit Claude Code 2.1.299) und kann sich
   ändern.
 
