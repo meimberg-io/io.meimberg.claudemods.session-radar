@@ -1,13 +1,12 @@
-import type { Elements, RenderElement } from 'claude-code'
+import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
-import type { Status, WaitReason } from '../types'
+import type { Entry, Status, WaitReason } from '../types'
+import { CARD_H, TILES_H, cardOf, cardSvg, tilesSvg } from './cards'
 import { groupRoster } from './roster'
 import type { Row } from './roster'
-import type { Entry } from '../types'
 
 export const PANE = 'session-radar'
 export const PANE_TITLE = 'Session Radar'
-
 
 const GLYPH: Record<Status, string> = { waiting: '◆', working: '●', idle: '✓' }
 const COLOR: Record<Status, string> = { waiting: '#e8a33d', working: '#8f8cf4', idle: '#5fbf8f' }
@@ -32,7 +31,9 @@ function minutes(ms: number): string {
 
 function clock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  const two = (n: number) => String(n).padStart(2, '0')
+  const h = Math.floor(s / 3600)
+  return h > 0 ? `${h}:${two(Math.floor(s / 60) % 60)}:${two(s % 60)}` : `${Math.floor(s / 60)}:${two(s % 60)}`
 }
 
 function cost(usd: number): string {
@@ -55,6 +56,9 @@ export type PaneData = {
   self: string
   isOpen: boolean
   onToggleDone: () => void
+  surface: RenderSurface
+  // The pane body's width in cells, as the Pane props give it.
+  columns: number
 }
 
 // The pane's tree from the surface's elements and what it shows; the caller
@@ -65,25 +69,67 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
   const g = groupRoster(data.entries, now)
   const total = [...g.waiting, ...g.working, ...g.idle].reduce((sum, r) => sum + (r.costUsd ?? 0), 0)
 
-  const row = (r: Row) => {
-    const meta = [
-      r.model,
+  const statsOf = (r: Row) =>
+    [
       r.contextPercent !== undefined ? `ctx ${Math.round(r.contextPercent)}%` : undefined,
       r.costUsd !== undefined ? cost(r.costUsd) : undefined,
       clock(now - r.startedAt),
     ].filter(Boolean)
+  const titleOf = (r: Row) => clip(r.title || r.cwd, TITLE_MAX) + (r.id === self ? ' (diese)' : '')
+  const waitLine = (r: Row) =>
+    `${waitText(r)} · seit ${minutes(now - (r.waitingSince ?? r.updatedAt))}` +
+    (r.isStale ? ` · keine Rückmeldung seit ${minutes(now - r.heartbeat)}` : '')
+  const isEmpty = g.waiting.length + g.working.length + g.idle.length === 0
+  const toggle = g.idle.length > 0 && (
+    <Button key="done-toggle" label={`${isOpen ? '▾' : '▸'} Fertig · ${g.idle.length}`} plain onPress={data.onToggleDone} />
+  )
+
+  if (data.surface !== 'terminal' && 'Svg' in els) {
+    const { Svg } = els
+    const W = Math.max(240, Math.min(900, (data.columns || 40) * 8 - 8))
+    const card = (r: Row) => {
+      const sub = r.status === 'waiting' ? waitLine(r) : r.model ?? ''
+      const c = cardOf(r, sub, statsOf(r).join(' · '), titleOf(r))
+      const alt = [titleOf(r), sub, c.steps, c.stats].filter(Boolean).join(', ')
+      return <Svg key={r.id} source={cardSvg(W, c)} alt={alt} width={W} height={CARD_H} />
+    }
+    const tiles = [
+      { label: 'Wartet', value: String(g.waiting.length), color: g.waiting.length > 0 ? COLOR.waiting : undefined },
+      { label: 'Läuft', value: String(g.working.length) },
+      { label: 'Kosten', value: cost(total) },
+    ]
+    return (
+      <Box flexDirection="column">
+        <Svg
+          key="tiles"
+          source={tilesSvg(W, tiles)}
+          alt={`Wartet ${g.waiting.length}, Läuft ${g.working.length}, Kosten ${cost(total)}`}
+          width={W}
+          height={TILES_H}
+        />
+        {isEmpty && <Text dimColor>Keine Sessions gemeldet.</Text>}
+        {g.waiting.length > 0 && <Text key="h-wait" dimColor>Wartet auf dich · {g.waiting.length}</Text>}
+        {g.waiting.map(card)}
+        {g.working.length > 0 && <Text key="h-run" dimColor>Läuft · {g.working.length}</Text>}
+        {g.working.map(card)}
+        {toggle}
+        {isOpen && g.idle.map(card)}
+      </Box>
+    )
+  }
+
+  const row = (r: Row) => {
+    const meta = [r.model, ...statsOf(r)].filter(Boolean)
     return (
       <Box key={r.id} flexDirection="column" marginBottom={1}>
         <Text wrap="truncate-end" dimColor={r.isStale}>
           <Text color={COLOR[r.status]}>{GLYPH[r.status]} </Text>
-          <Text bold>{clip(r.title || r.cwd, TITLE_MAX)}</Text>
-          {r.id === self ? ' (diese)' : ''}
+          <Text bold>{titleOf(r)}</Text>
         </Text>
         {r.status === 'waiting' && (
           <Text wrap="truncate-end" color={r.isStale ? undefined : COLOR.waiting} dimColor={r.isStale}>
             {'  '}
-            {waitText(r)} · seit {minutes(now - (r.waitingSince ?? r.updatedAt))}
-            {r.isStale ? ` · keine Rückmeldung seit ${minutes(now - r.heartbeat)}` : ''}
+            {waitLine(r)}
           </Text>
         )}
         {r.status === 'working' && r.tasks && r.tasks.total > 0 && (
@@ -100,8 +146,6 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
       </Box>
     )
   }
-
-  const isEmpty = g.waiting.length + g.working.length + g.idle.length === 0
 
   return (
     <Box flexDirection="column">
@@ -127,14 +171,7 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
         </Text>
       )}
       {g.working.map(row)}
-      {g.idle.length > 0 && (
-        <Button
-          key="done-toggle"
-          label={`${isOpen ? '▾' : '▸'} Fertig · ${g.idle.length}`}
-          plain
-          onPress={data.onToggleDone}
-        />
-      )}
+      {toggle}
       {isOpen && g.idle.map(row)}
     </Box>
   )

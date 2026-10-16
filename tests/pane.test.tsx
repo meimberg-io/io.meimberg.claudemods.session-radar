@@ -36,10 +36,25 @@ async function open($: Engine, on: On, entries: Record<string, unknown> = three)
   return opened
 }
 
+async function mount($: Engine, surface: 'terminal' | 'desktop') {
+  return $.ui.mount({ plugin: 'session-radar', surface, component: 'Pane', requestId: PANE, props })
+}
+
+// What a row says: its text on the terminal, its card's alt text on the desktop.
+async function says($: Engine, surface: 'terminal' | 'desktop', text: RegExp): Promise<boolean> {
+  const ui = await mount($, surface)
+  const found =
+    surface === 'terminal'
+      ? (await ui.find({ text })) !== undefined
+      : (await ui.findAll({ type: 'Svg' })).some(c => text.test(String(c.props.alt)))
+  await ui.unmount()
+  return found
+}
+
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`${surface}: the pane groups waiting, running and finished sessions`, async ($, on) => {
     await open($, on)
-    const ui = await $.ui.mount({ plugin: 'session-radar', surface, component: 'Pane', requestId: PANE, props })
+    const ui = await mount($, surface)
     expect(await ui.find({ text: /Wartet auf dich · 1/ })).toBeDefined()
     expect(await ui.find({ text: /Läuft · 1/ })).toBeDefined()
     expect(await ui.find({ text: /Fertig · 1/ })).toBeDefined()
@@ -47,32 +62,54 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
   test(`${surface}: a waiting row says what it waits for`, async ($, on) => {
     await open($, on)
-    const ui = await $.ui.mount({ plugin: 'session-radar', surface, component: 'Pane', requestId: PANE, props })
-    expect(await ui.find({ text: /Freigabe Bash/ })).toBeDefined()
+    expect(await says($, surface, /Freigabe Bash/)).toBe(true)
   })
 
   test(`${surface}: a running row shows its task progress`, async ($, on) => {
     await open($, on)
-    const ui = await $.ui.mount({ plugin: 'session-radar', surface, component: 'Pane', requestId: PANE, props })
-    expect(await ui.find({ text: /2\/5/ })).toBeDefined()
-    expect(await ui.find({ text: /\(diese\)/ })).toBeDefined()
+    expect(await says($, surface, /2\/5/)).toBe(true)
+    expect(await says($, surface, /\(diese\)/)).toBe(true)
   })
 
   test(`${surface}: finished sessions show only once unfolded`, async ($, on) => {
     await open($, on)
-    const ui = await $.ui.mount({ plugin: 'session-radar', surface, component: 'Pane', requestId: PANE, props })
-    expect(await ui.find({ text: /Fertige Session/ })).toBeUndefined()
+    expect(await says($, surface, /Fertige Session/)).toBe(false)
+    const ui = await mount($, surface)
     await ui.press({ key: 'done-toggle' })
-    expect(await ui.find({ text: /Fertige Session/ })).toBeDefined()
+    await ui.unmount()
+    expect(await says($, surface, /Fertige Session/)).toBe(true)
   })
 
   test(`${surface}: a very long title is clipped and still draws`, async ($, on) => {
     await open($, on, { 'session:long': entry({ id: 'long', title: 'L'.repeat(500), status: 'working' }) })
-    const ui = await $.ui.mount({ plugin: 'session-radar', surface, component: 'Pane', requestId: PANE, props })
-    expect(await ui.find({ text: /L{59}…/ })).toBeDefined()
-    expect(await ui.find({ text: /L{61}/ })).toBeUndefined()
+    expect(await says($, surface, /L{59}…/)).toBe(true)
+    expect(await says($, surface, /L{61}/)).toBe(false)
   })
 }
+
+test('desktop: tiles and one card per shown session, drawn as Svg', async ($, on) => {
+  await open($, on)
+  const ui = await mount($, 'desktop')
+  const svgs = await ui.findAll({ type: 'Svg' })
+  // header tiles + waiting card + running card; finished is folded
+  expect(svgs.length).toBe(3)
+  expect(String(svgs[0]?.props.alt)).toMatch(/Wartet 1, Läuft 1/)
+  for (const s of svgs) expect(String(s.props.source)).toMatch(/^<svg /)
+})
+
+test('desktop: text in a card is escaped', async ($, on) => {
+  await open($, on, { 'session:x': entry({ id: 'x', title: 'a <b> & "c"', status: 'working' }) })
+  const ui = await mount($, 'desktop')
+  const source = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.source)).join('')
+  expect(source).toContain('a &lt;b&gt; &amp; &quot;c&quot;')
+  expect(source).not.toContain('<b>')
+})
+
+test('terminal: no Svg is drawn', async ($, on) => {
+  await open($, on)
+  const ui = await mount($, 'terminal')
+  expect((await ui.findAll({ type: 'Svg' })).length).toBe(0)
+})
 
 test('/radar opens the pane', async ($, on) => {
   const opened = await open($, on)

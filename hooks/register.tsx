@@ -212,6 +212,8 @@ export const register: Register = on => {
       self: await read($, selfId),
       isOpen: await read($, isDoneOpen),
       onToggleDone: () => void update($, isDoneOpen, open => !open),
+      surface: e.surface,
+      columns: e.props.bodyColumns,
     }),
   )
 
