@@ -23,6 +23,7 @@ async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', s
   on('session.surfaces', async () => ({ value: surface ? [surface] : [] }) as never)
   on('prompt.submit', async (_$, e) => ({ text: e.text }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }) as never)
   on('tool.call', async (_$, e) => (await toolAnswer(e)) as never)
   await $.session.start({ source: 'startup', cwd: '/repo', surface, isInteractive: surface !== null } as never)
 }
@@ -83,7 +84,7 @@ test('the task list of the session shows as done/total', async ($, on) => {
     ],
   } as never)
   await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', advance: true } as never)
-  expect(await dump($)).toMatch(/· working · - · - · 1\/2$/m)
+  expect(await dump($)).toMatch(/· working · - · - · 1\/2 —/m)
 })
 
 test("a subagent's own todo list leaves the session's progress alone", async ($, on) => {
@@ -91,7 +92,7 @@ test("a subagent's own todo list leaves the session's progress alone", async ($,
   await $.prompt.submit({ text: 'plan it' } as never)
   await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'Mine', status: 'pending' }] } as never)
   await $.tool.call({ tool: 'TodoWrite', agentId: 'sub-1', todos: [{ content: 'A', status: 'completed' }, { content: 'B', status: 'pending' }] } as never)
-  expect(await dump($)).toMatch(/ · 0\/1$/m)
+  expect(await dump($)).toMatch(/ · 0\/1 —/m)
 })
 
 test('after /clear the session reports again under its new id', async ($, on) => {
@@ -128,7 +129,7 @@ test('a meta prompt does not answer a next-step question', async ($, on) => {
 test('a reload keeps what the session reported before', async ($, on) => {
   const before = { v: 1, id: 'sess-1', title: 'repo: x', cwd: '/repo', status: 'waiting', waitReason: 'nextstep', isSticky: true, waitingSince: 1, startedAt: 1, updatedAt: 1, heartbeat: Date.parse('2026-10-16T11:59:00Z'), tasks: { done: 2, total: 4, current: 'b' } }
   await start($, on, 'desktop', { 'session:sess-1': before })
-  expect(await dump($)).toMatch(/^sess-1 · waiting · nextstep · - · 2\/4$/m)
+  expect(await dump($)).toMatch(/^sess-1 · waiting · nextstep · - · 2\/4 —/m)
 })
 
 test('a question shows as a question, not as a permission for it', async ($, on) => {
@@ -142,4 +143,10 @@ test('a question shows as a question, not as a permission for it', async ($, on)
   }
   await $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
   expect(during).toMatch(/· waiting · question · -/)
+})
+
+test('a turn started without prompt.submit still names the session', async ($, on) => {
+  await start($, on)
+  await $.turn.start({ text: 'Recherchiere zu anthropic', turnId: 't1' } as never)
+  expect(await dump($)).toMatch(/— repo: Recherchiere zu anthropic$/m)
 })

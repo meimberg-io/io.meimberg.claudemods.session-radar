@@ -133,7 +133,12 @@ function startPolling($: EngineInterface): void {
 
 function dumpLine(e: Entry): string {
   const tasks = e.tasks ? [`${e.tasks.done}/${e.tasks.total}`] : []
-  return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-', ...tasks].join(' · ')
+  return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-', ...tasks].join(' · ') + ` — ${e.title}`
+}
+
+// The fallback title, from the first prompt, once.
+function nameFrom(text: string): void {
+  if (me && !me.title && text.trim() !== '') me = { ...me, title: `${basename(me.cwd)}: ${text.trim().slice(0, 40)}` }
 }
 
 function basename(path: string): string {
@@ -209,12 +214,14 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     // Notices, delivery receipts and slash commands are not the person answering.
     if (e.isMeta || e.command) return next(e)
-    if (me && !me.title) me = { ...me, title: `${basename(me.cwd)}: ${e.text.slice(0, 40)}` }
+    nameFrom(e.text)
     await emit($, { kind: 'prompt' })
     return next(e)
   })
 
   on('turn.start', async ($, e, next) => {
+    // The desktop app may start a turn without a prompt.submit the mod sees.
+    nameFrom(e.text)
     await emit($, { kind: 'turnStart' })
     return next(e)
   })
