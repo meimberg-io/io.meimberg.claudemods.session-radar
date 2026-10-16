@@ -1,13 +1,20 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Entry, Signal } from '../types'
 import { pruneOld, readEntries, removeEntry, writeEntry } from './channel'
 import type { StoreLike } from './channel'
+import { PANE, PANE_TITLE, paneTree } from './pane'
 import { applySignal } from './status'
 import { applyTaskCall, summarize } from './tasks'
 import type { TaskList } from './tasks'
 
+const roster = atom({ plugin: 'session-radar', key: 'roster' } as const, [])
+const selfId = atom({ plugin: 'session-radar', key: 'selfId' } as const, '')
+const isDoneOpen = atom({ plugin: 'session-radar', key: 'isDoneOpen' } as const, false)
+
 const HEARTBEAT_MS = 30_000
+const POLL_MS = 3_000
 const WAIT_TOOLS: Record<string, 'question' | 'plan'> = { AskUserQuestion: 'question', ExitPlanMode: 'plan' }
 const WRAP_UP = 'mcp__ccd_turn__wrap_up'
 
@@ -16,6 +23,7 @@ let me: Entry | undefined
 let titleFromHost: string | undefined
 let beat: Timer | undefined
 let taskList: TaskList | undefined
+let poll: Timer | undefined
 
 // The engine wants $ spelled out at each call, so the channel gets $.store this way.
 export function storeOf($: EngineInterface): StoreLike {
@@ -70,6 +78,28 @@ async function begin($: EngineInterface, cwd: string): Promise<void> {
   })
 }
 
+async function refresh($: EngineInterface): Promise<void> {
+  const entries = await readEntries(storeOf($))
+  await update($, roster, () => entries)
+}
+
+function stopPolling(): void {
+  poll?.cancel()
+  poll = undefined
+}
+
+// Reads the others every few seconds while the pane is up, and stops once it is gone.
+function startPolling($: EngineInterface): void {
+  if (poll) return
+  poll = $.clock.every(POLL_MS, () => {
+    void (async () => {
+      const isUp = (await $.ui.panes()).some(p => p.id === PANE)
+      if (!isUp) return stopPolling()
+      await refresh($)
+    })()
+  })
+}
+
 function dumpLine(e: Entry): string {
   const tasks = e.tasks ? [`${e.tasks.done}/${e.tasks.total}`] : []
   return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-', ...tasks].join(' · ')
@@ -83,6 +113,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await $.command.register({ name: 'radar', description: 'Open the Session Radar pane' })
+    const id = await $.session.id()
+    await update($, selfId, () => id)
     if (await isInteractive($, e.surface)) await begin($, e.cwd)
     return started
   })
@@ -109,8 +141,26 @@ export const register: Register = on => {
       const list = await readEntries(storeOf($))
       return { text: list.length === 0 ? 'Keine Sessions gemeldet.' : list.map(dumpLine).join('\n') }
     }
-    return { text: 'Session Radar.' }
+    await refresh($)
+    await $.ui.open({ id: PANE, title: PANE_TITLE })
+    startPolling($)
+    return { text: 'Session Radar geöffnet.' }
   })
+
+  on('ui.close', async ($, e, next) => {
+    if (e.id === PANE) stopPolling()
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
+    paneTree($.ui.resolve(e), {
+      entries: await read($, roster),
+      now: await $.clock.now(),
+      self: await read($, selfId),
+      isOpen: await read($, isDoneOpen),
+      onToggleDone: () => void update($, isDoneOpen, open => !open),
+    }),
+  )
 
   on('prompt.submit', async ($, e, next) => {
     if (me && !me.title) me = { ...me, title: `${basename(me.cwd)}: ${e.text.slice(0, 40)}` }
@@ -175,6 +225,7 @@ export const register: Register = on => {
 
   on('session.end', async ($, e, next) => {
     beat?.cancel()
+    stopPolling()
     if (me) await removeEntry(storeOf($), me.id)
     me = undefined
     return next(e)
