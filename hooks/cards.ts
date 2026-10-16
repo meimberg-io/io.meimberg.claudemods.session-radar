@@ -16,8 +16,6 @@ export const MARK_W = 22
 const CSS = `<style>
 .t{fill:#1f1f1f}.s{fill:#6b6b68}.k{fill:#ecebe8}.ln{stroke:#e4e4e1}.tile{fill:#f4f3f0}
 @media (prefers-color-scheme: dark){.t{fill:#ececec}.s{fill:#a8a8a4}.k{fill:#2c2c2b}.ln{stroke:#333331}.tile{fill:#262625}}
-.live{animation:p 1.6s ease-in-out infinite}@keyframes p{50%{opacity:.35}}
-@media (prefers-reduced-motion: reduce){.live{animation:none}}
 </style>`
 
 export function xml(text: string): string {
@@ -71,8 +69,8 @@ export function tilesSvg(W: number, tiles: readonly { label: string; value: stri
 
 function icon(status: Status, cx: number, cy: number): string {
   const c = COLOR[status]
-  if (status === 'waiting') return `<rect class="live" x="${cx - 6}" y="${cy - 6}" width="12" height="12" rx="2" fill="${c}" transform="rotate(45 ${cx} ${cy})"/>`
-  if (status === 'working') return `<circle class="live" cx="${cx}" cy="${cy}" r="6" fill="${c}"/>`
+  if (status === 'waiting') return `<rect x="${cx - 6}" y="${cy - 6}" width="12" height="12" rx="2" fill="${c}" transform="rotate(45 ${cx} ${cy})"/>`
+  if (status === 'working') return `<circle cx="${cx}" cy="${cy}" r="6" fill="${c}"/>`
   return `<circle cx="${cx}" cy="${cy}" r="8" fill="${c}" opacity=".18"/><path d="M${cx - 4} ${cy} l3 3 l5 -6" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`
 }
 

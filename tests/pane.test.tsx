@@ -147,3 +147,11 @@ test('/radar opens the pane', async ($, on) => {
   const opened = await open($, on)
   expect(opened).toEqual([PANE])
 })
+
+test('desktop: status icons do not pulse', async ($, on) => {
+  await open($, on)
+  const ui = await mount($, 'desktop')
+  const source = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.source)).join('')
+  expect(source).not.toMatch(/animation|class="live"/)
+  await ui.unmount()
+})
