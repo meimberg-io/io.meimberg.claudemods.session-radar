@@ -13,13 +13,21 @@ function entry(over: Partial<Entry>): Entry {
 }
 
 const three = {
-  'session:w': entry({ id: 'w', title: 'Wartende Session', status: 'waiting', waitReason: 'permission', waitTool: 'Bash', waitingSince: NOW - 120_000 }),
-  'session:r': entry({ id: 'r', title: 'Laufende Session', status: 'working', tasks: { done: 2, total: 5, current: 'Tests schreiben' } }),
+  'session:w': entry({ id: 'w', title: 'Wartende Session', status: 'waiting', waitReason: 'permission', waitTool: 'Bash', waitingSince: NOW - 120_000, hostId: 'local_aaaa-1111' }),
+  'session:r': entry({ id: 'r', title: 'Laufende Session', status: 'working', tasks: { done: 2, total: 5, current: 'Tests schreiben' }, hostId: 'local_bbbb-2222' }),
   'session:i': entry({ id: 'i', title: 'Fertige Session', status: 'idle', lastTurnEndedAt: NOW - 5_000 }),
 }
 
+// The commands the pane ran on the host, as argv.
+let ran: string[][] = []
+
 async function open($: Engine, on: On, entries: Record<string, unknown> = three): Promise<string[]> {
   const opened: string[] = []
+  ran = []
+  on('process.run', async (_$, e) => {
+    ran.push([...(e as unknown as { argv: string[] }).argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+  })
   mock.store(on, entries)
   mock.clock(on, { now: NOW })
   on('session.start', async () => ({ cwd: '/repo' }) as never)
@@ -84,6 +92,30 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await open($, on, { 'session:long': entry({ id: 'long', title: 'L'.repeat(500), status: 'working' }) })
     expect(await says($, surface, /L{59}…/)).toBe(true)
     expect(await says($, surface, /L{61}/)).toBe(false)
+  })
+}
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: pressing a session's open button jumps to it in the app`, async ($, on) => {
+    await open($, on)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'open-w' })
+    await ui.unmount()
+    expect(ran).toEqual([['open', 'claude://claude.ai/epitaxy/local_aaaa-1111']])
+  })
+
+  test(`${surface}: no open button for this session or one without a valid app id`, async ($, on) => {
+    await open($, on, {
+      ...three,
+      'session:x': entry({ id: 'x', title: 'Fremd', status: 'working', hostId: 'local_x; rm -rf ~' }),
+      'session:y': entry({ id: 'y', title: 'Terminal', status: 'working' }),
+    })
+    const ui = await mount($, surface)
+    expect(await ui.find({ key: 'open-w' })).toBeDefined()
+    expect(await ui.find({ key: 'open-r' })).toBeUndefined()
+    expect(await ui.find({ key: 'open-x' })).toBeUndefined()
+    expect(await ui.find({ key: 'open-y' })).toBeUndefined()
+    await ui.unmount()
   })
 }
 

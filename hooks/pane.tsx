@@ -1,7 +1,8 @@
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
 import type { Entry, Status, WaitReason } from '../types'
-import { CARD_H, TILES_H, cardOf, cardSvg, tilesSvg } from './cards'
+import { CARD_H, MARK_W, TILES_H, cardOf, cardSvg, tilesSvg } from './cards'
+import { HOST_ID } from './channel'
 import { groupRoster } from './roster'
 import type { Row } from './roster'
 
@@ -56,6 +57,8 @@ export type PaneData = {
   self: string
   isOpen: boolean
   onToggleDone: () => void
+  // Jumps to a session in the desktop app by its app id.
+  onOpen: (hostId: string) => void
   surface: RenderSurface
   // The pane body's width in cells, as the Pane props give it.
   columns: number
@@ -80,6 +83,10 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
     `${waitText(r)} · seit ${minutes(now - (r.waitingSince ?? r.updatedAt))}` +
     (r.isStale ? ` · keine Rückmeldung seit ${minutes(now - r.heartbeat)}` : '')
   const isEmpty = g.waiting.length + g.working.length + g.idle.length === 0
+  const openButton = (r: Row) =>
+    r.hostId && r.id !== self && HOST_ID.test(r.hostId) ? (
+      <Button key={`open-${r.id}`} label="Öffnen ↗" plain onPress={() => data.onOpen(r.hostId!)} />
+    ) : null
   const toggle = g.idle.length > 0 && (
     <Button key="done-toggle" label={`${isOpen ? '▾' : '▸'} Fertig · ${g.idle.length}`} plain onPress={data.onToggleDone} />
   )
@@ -91,7 +98,17 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
       const sub = r.status === 'waiting' ? waitLine(r) : r.model ?? ''
       const c = cardOf(r, sub, statsOf(r).join(' · '), titleOf(r))
       const alt = [titleOf(r), sub, c.steps, c.stats].filter(Boolean).join(', ')
-      return <Svg key={r.id} source={cardSvg(W, c)} alt={alt} width={W} height={CARD_H} />
+      const open = openButton(r)
+      return (
+        <Box key={r.id} flexDirection="column">
+          <Svg source={cardSvg(W, c)} alt={alt} width={W} height={CARD_H} />
+          {open && (
+            <Box position="absolute" top={2} right={MARK_W}>
+              {open}
+            </Box>
+          )}
+        </Box>
+      )
     }
     const tiles = [
       { label: 'Wartet', value: String(g.waiting.length), color: g.waiting.length > 0 ? COLOR.waiting : undefined },
@@ -126,6 +143,7 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
           <Text color={COLOR[r.status]}>{GLYPH[r.status]} </Text>
           <Text bold>{titleOf(r)}</Text>
         </Text>
+        {openButton(r)}
         {r.status === 'waiting' && (
           <Text wrap="truncate-end" color={r.isStale ? undefined : COLOR.waiting} dimColor={r.isStale}>
             {'  '}

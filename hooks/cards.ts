@@ -11,7 +11,7 @@ export const TILES_H = 44
 const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif"
 const COLOR: Record<Status, string> = { waiting: '#e8a33d', working: '#8f8cf4', idle: '#5fbf8f' }
 const ICON_W = 28
-const MARK_W = 22
+export const MARK_W = 22
 
 const CSS = `<style>
 .t{fill:#1f1f1f}.s{fill:#6b6b68}.k{fill:#ecebe8}.ln{stroke:#e4e4e1}.tile{fill:#f4f3f0}

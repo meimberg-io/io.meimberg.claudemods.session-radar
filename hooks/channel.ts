@@ -10,6 +10,8 @@ export type StoreLike = Pick<EngineInterface['store'], 'get' | 'set' | 'delete' 
 // can be swapped for a file per session.
 
 export const KEY_PREFIX = 'session:'
+// What a desktop app session id looks like; nothing else goes into a link.
+export const HOST_ID = /^local_[0-9a-f-]+$/i
 const PRUNE_MS = 86_400_000
 
 const STATUSES = new Set(['waiting', 'working', 'idle'])
@@ -45,6 +47,7 @@ function sanitize(e: Entry): Entry {
   for (const key of ['waitingSince', 'contextPercent', 'costUsd', 'lastTurnEndedAt'] as const) {
     if (out[key] !== undefined && !isNumber(out[key])) delete out[key]
   }
+  if (out.hostId !== undefined && !(typeof out.hostId === 'string' && HOST_ID.test(out.hostId))) delete out.hostId
   for (const key of ['waitTool', 'model'] as const) {
     if (out[key] !== undefined && typeof out[key] !== 'string') delete out[key]
   }

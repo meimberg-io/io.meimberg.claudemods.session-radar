@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 // What a tool call answers beneath the plugin; a test may swap it.
+let opened: string[] = []
 let checkAnswer = 'allow'
 let toolAnswer: (e: { tool: string }) => Promise<unknown> = async () => ({ result: 'ok' })
 
@@ -11,6 +12,7 @@ let sessionId = 'sess-1'
 async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', stored: Record<string, unknown> = {}) {
   toolAnswer = async () => ({ result: 'ok' })
   checkAnswer = 'allow'
+  opened = []
   sessionId = 'sess-1'
   mock.store(on, stored)
   mock.clock(on, { now: Date.parse('2026-10-16T12:00:00Z') })
@@ -21,6 +23,11 @@ async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', s
   on('session.end', async () => ({ sessionId }) as never)
   on('classic.SessionStart', async () => ({}) as never)
   on('ui.panes', async () => ({ value: [] }) as never)
+  on('ui.open', async (_$, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } } as never
+  })
+  mock.env(on, surface ? { CLAUDE_CODE_HOST_SESSION_ID: 'local_c400d3fe-ac97' } : {})
   on('session.cwd', async () => ({ value: '/repo' }) as never)
   on('session.surfaces', async () => ({ value: surface ? [surface] : [] }) as never)
   on('prompt.submit', async (_$, e) => ({ text: e.text }) as never)
@@ -151,7 +158,7 @@ test('a question shows as a question, not as a permission for it', async ($, on)
 test('a turn started without prompt.submit still names the session', async ($, on) => {
   await start($, on)
   await $.turn.start({ text: 'Recherchiere zu anthropic', turnId: 't1' } as never)
-  expect(await dump($)).toMatch(/— repo: Recherchiere zu anthropic$/m)
+  expect(await dump($)).toMatch(/— repo: Recherchiere zu anthropic( \[|$)/m)
 })
 
 test('a respawned worker without a surface keeps reporting a session it reported before', async ($, on) => {
@@ -186,4 +193,19 @@ test('an allowed tool does not wait', async ($, on) => {
   await $.prompt.submit({ text: 'read' } as never)
   await $.tool.check({ tool: 'Read', input: {} } as never)
   expect(await dump($)).toMatch(/· working/)
+})
+
+test('a desktop session reports its app id', async ($, on) => {
+  await start($, on)
+  expect(await dump($)).toMatch(/\[local_c400d3fe-ac97\]$/m)
+})
+
+test('the pane opens by itself in an interactive session', async ($, on) => {
+  await start($, on)
+  expect(opened).toEqual(['session-radar'])
+})
+
+test('the pane stays closed in a session without a surface', async ($, on) => {
+  await start($, on, null)
+  expect(opened).toEqual([])
 })

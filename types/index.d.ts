@@ -16,6 +16,8 @@ export type Entry = {
   waitLoops?: string[]
   // A next-step question outlives the turn's end, until the next prompt.
   isSticky?: boolean
+  // The desktop app's own id for the session (local_…), to jump to it.
+  hostId?: string
   tasks?: Tasks
   model?: string
   contextPercent?: number

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Entry, Signal } from '../types'
-import { KEY_PREFIX, isEntry, pruneOld, readEntries, removeEntry, writeEntry } from './channel'
+import { HOST_ID, KEY_PREFIX, isEntry, pruneOld, readEntries, removeEntry, writeEntry } from './channel'
 import type { StoreLike } from './channel'
 import { PANE, PANE_TITLE, paneTree } from './pane'
 import { applySignal } from './status'
@@ -92,10 +92,12 @@ async function begin($: EngineInterface, cwd: string): Promise<void> {
   const now = await $.clock.now()
   const id = await $.session.id()
   const left = await $.store.get(KEY_PREFIX + id)
+  const host = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
+  const hostId = host && HOST_ID.test(host) ? host : undefined
   if (me) return
   me = isEntry(left)
-    ? { ...left, cwd, heartbeat: now }
-    : { v: 1, id, title: titleFromHost ?? '', cwd, status: 'idle', startedAt: now, updatedAt: now, heartbeat: now }
+    ? { ...left, cwd, heartbeat: now, hostId }
+    : { v: 1, id, title: titleFromHost ?? '', cwd, status: 'idle', startedAt: now, updatedAt: now, heartbeat: now, hostId }
   reportsFrom = cwd
   await pruneOld(storeOf($), now)
   await save($)
@@ -134,7 +136,7 @@ function startPolling($: EngineInterface): void {
 
 function dumpLine(e: Entry): string {
   const tasks = e.tasks ? [`${e.tasks.done}/${e.tasks.total}`] : []
-  return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-', ...tasks].join(' · ') + ` — ${e.title}`
+  return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-', ...tasks].join(' · ') + ` — ${e.title}` + (e.hostId ? ` [${e.hostId}]` : '')
 }
 
 // The fallback title, from the first prompt, once.
@@ -156,10 +158,12 @@ export const register: Register = on => {
     // session left says it was interactive.
     const left = await $.store.get(KEY_PREFIX + id)
     if (isEntry(left) || (await isInteractive($, e.surface))) await begin($, e.cwd)
-    // A reload stops the poll; an open pane keeps refreshing.
+    // A session that reports opens the pane as a tab of its own; a reload
+    // stops the poll, and this starts it again.
     try {
-      if ((await $.ui.panes()).some(p => p.id === PANE)) {
+      if (me || (await $.ui.panes()).some(p => p.id === PANE)) {
         await refresh($)
+        if (me) await $.ui.open({ id: PANE, title: PANE_TITLE })
         startPolling($)
       }
     } catch {}
@@ -212,6 +216,7 @@ export const register: Register = on => {
       self: await read($, selfId),
       isOpen: await read($, isDoneOpen),
       onToggleDone: () => void update($, isDoneOpen, open => !open),
+      onOpen: hostId => void $.process.run(['open', `claude://claude.ai/epitaxy/${hostId}`]).catch(() => {}),
       surface: e.surface,
       columns: e.props.bodyColumns,
     }),
