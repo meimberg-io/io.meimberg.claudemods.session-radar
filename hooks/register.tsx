@@ -152,7 +152,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
+  on('ui.render', { component: 'Pane', requestId: 'session-radar' }, async ($, e) =>
     paneTree($.ui.resolve(e), {
       entries: await read($, roster),
       now: await $.clock.now(),
