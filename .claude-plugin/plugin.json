@@ -1,0 +1,7 @@
+{
+  "name": "session-radar",
+  "version": "0.1.0",
+  "description": "Panel with every interactive Claude Code session on this Mac: waiting for you, running, finished.",
+  "author": { "name": "Oliver Meimberg" },
+  "types": "./types/index.d.ts"
+}
