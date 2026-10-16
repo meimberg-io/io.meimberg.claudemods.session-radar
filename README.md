@@ -18,19 +18,27 @@ Dort ist eine Zeile ein Subagent, hier eine ganze Session.
 
 ## Installation
 
+Repository klonen, an einen Ort deiner Wahl:
+
+```bash
+git clone https://github.com/meimberg-io/io.meimberg.claudemods.session-radar.git ~/session-radar
+```
+
 Der Mod muss in jeder Session geladen sein, die im Panel erscheinen soll. Dafür
-den Ordner in `~/.claude/settings.json` eintragen. Mehrere Ordner werden mit `:`
-getrennt, einen bestehenden Wert also ergänzen statt ersetzen:
+den Ordner in `~/.claude/settings.json` eintragen, als absoluten Pfad zu deinem
+Klon. Mehrere Ordner werden mit `:` getrennt, einen bestehenden Wert also
+ergänzen statt ersetzen:
 
 ```json
 {
   "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "/Users/oli/workspace-meimbergio/io.meimberg.claudemods.session-radar"
+    "CLAUDE_CODE_PLUGIN_DIRS": "/Users/<du>/session-radar"
   }
 }
 ```
 
-Neue Sessions laden ihn danach automatisch, auch in der Desktop-App.
+Neue Sessions laden ihn danach automatisch, auch in der Desktop-App. Schon
+offene Sessions brauchen einen Neustart. `git pull` im Klon aktualisiert den Mod.
 
 ## Bedienung
 
@@ -66,3 +74,10 @@ npx -y -p typescript@5.6.3 tsc -p .
 
 Die Typen unter `.claude-plugin/types/` legt die Engine beim Laden an, sie sind
 nicht im Repo. Design und Plan liegen unter `docs/superpowers/`.
+
+## Lizenz
+
+MIT, siehe [LICENSE](LICENSE). Panel-Aufbau und Kartendesign sind an
+[savvy-progress](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress)
+von johnnyvizz angelehnt, das ebenfalls unter MIT steht; der Hinweis dazu steht
+in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
