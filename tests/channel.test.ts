@@ -54,3 +54,27 @@ test('removing an entry removes only that key', async () => {
   await removeEntry(store, 'a')
   expect((await readEntries(store)).map(e => e.id)).toEqual(['b'])
 })
+
+test('an entry without title, folder or start time is skipped', async () => {
+  const store = memory({
+    'session:a': { v: 1, id: 'a', status: 'idle', heartbeat: NOW, updatedAt: NOW, startedAt: 0 },
+    'session:b': { v: 1, id: 'b', title: 't', cwd: '/r', status: 'idle', heartbeat: NOW, updatedAt: NOW },
+  })
+  expect(await readEntries(store)).toEqual([])
+})
+
+test('optional fields of the wrong type are dropped on read', async () => {
+  const store = memory({ 'session:a': { ...entry({ id: 'a' }), costUsd: 'x', contextPercent: null, waitingSince: 'soon', tasks: 'nope', title: 'zwei\nZeilen' } })
+  const [read] = await readEntries(store)
+  expect(read?.costUsd).toBeUndefined()
+  expect(read?.contextPercent).toBeUndefined()
+  expect(read?.waitingSince).toBeUndefined()
+  expect(read?.tasks).toBeUndefined()
+  expect(read?.title).toBe('zwei Zeilen')
+})
+
+test('broken session keys are pruned too', async () => {
+  const store = memory({ 'session:junk': 'hello', 'session:ok': entry({ id: 'ok' }) })
+  await pruneOld(store, NOW)
+  expect(await store.keys()).toEqual(['session:ok'])
+})

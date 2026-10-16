@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Entry, Signal } from '../types'
-import { pruneOld, readEntries, removeEntry, writeEntry } from './channel'
+import { KEY_PREFIX, isEntry, pruneOld, readEntries, removeEntry, writeEntry } from './channel'
 import type { StoreLike } from './channel'
 import { PANE, PANE_TITLE, paneTree } from './pane'
 import { applySignal } from './status'
@@ -24,6 +24,8 @@ let titleFromHost: string | undefined
 let beat: Timer | undefined
 let taskList: TaskList | undefined
 let poll: Timer | undefined
+// Remembered across a /clear, which ends the session without a session.start.
+let reportsFrom: string | undefined
 
 // The engine wants $ spelled out at each call, so the channel gets $.store this way.
 export function storeOf($: EngineInterface): StoreLike {
@@ -39,10 +41,39 @@ async function save($: EngineInterface): Promise<void> {
   if (me) await writeEntry(storeOf($), me)
 }
 
-async function emit($: EngineInterface, signal: Signal): Promise<void> {
+// Applies a signal and, with `loops`, changes which loops hold a wait open.
+// The time is read first, so no await sits between reading `me` and writing it.
+async function emit($: EngineInterface, signal: Signal, loops?: (open: string[]) => string[]): Promise<void> {
+  const now = await $.clock.now()
   if (!me) return
-  me = applySignal(me, signal, await $.clock.now())
+  const open = loops ? loops(me.waitLoops ?? []) : me.waitLoops ?? []
+  const next = applySignal(me, signal, now)
+  me = { ...next, waitLoops: next.status === 'waiting' ? open : [] }
   await save($)
+}
+
+function loopOf(agentId: string | undefined): string {
+  return agentId ?? ''
+}
+
+async function openWait($: EngineInterface, loop: string, reason: 'permission' | 'question' | 'plan', tool?: string): Promise<void> {
+  await emit($, { kind: 'waitStart', reason, tool }, open => [...open, loop])
+}
+
+// A tool call of `loop` resolved: the wait it held is over; the session goes
+// back to working once no loop holds one.
+async function closeWait($: EngineInterface, loop: string): Promise<void> {
+  if (!me || me.status !== 'waiting') return
+  const open = me.waitLoops ?? []
+  const at = open.indexOf(loop)
+  if (at < 0) return
+  const rest = [...open.slice(0, at), ...open.slice(at + 1)]
+  if (rest.length > 0) {
+    me = { ...me, waitLoops: rest }
+    await save($)
+    return
+  }
+  await emit($, { kind: 'waitEnd' }, () => [])
 }
 
 async function isInteractive($: EngineInterface, surface: unknown): Promise<boolean> {
@@ -54,27 +85,27 @@ async function isInteractive($: EngineInterface, surface: unknown): Promise<bool
   }
 }
 
+// Starts reporting; after a reload it picks up the entry the session left.
 async function begin($: EngineInterface, cwd: string): Promise<void> {
   if (me) return
   const now = await $.clock.now()
-  me = {
-    v: 1,
-    id: await $.session.id(),
-    title: titleFromHost ?? '',
-    cwd,
-    status: 'idle',
-    startedAt: now,
-    updatedAt: now,
-    heartbeat: now,
-  }
+  const id = await $.session.id()
+  const left = await $.store.get(KEY_PREFIX + id)
+  if (me) return
+  me = isEntry(left)
+    ? { ...left, cwd, heartbeat: now }
+    : { v: 1, id, title: titleFromHost ?? '', cwd, status: 'idle', startedAt: now, updatedAt: now, heartbeat: now }
+  reportsFrom = cwd
   await pruneOld(storeOf($), now)
   await save($)
+  beat?.cancel()
   beat = $.clock.every(HEARTBEAT_MS, () => {
     void (async () => {
+      const at = await $.clock.now()
       if (!me) return
-      me = { ...me, heartbeat: await $.clock.now() }
+      me = { ...me, heartbeat: at }
       await save($)
-    })()
+    })().catch(() => {})
   })
 }
 
@@ -96,7 +127,7 @@ function startPolling($: EngineInterface): void {
       const isUp = (await $.ui.panes()).some(p => p.id === PANE)
       if (!isUp) return stopPolling()
       await refresh($)
-    })()
+    })().catch(() => {})
   })
 }
 
@@ -116,6 +147,13 @@ export const register: Register = on => {
     const id = await $.session.id()
     await update($, selfId, () => id)
     if (await isInteractive($, e.surface)) await begin($, e.cwd)
+    // A reload stops the poll; an open pane keeps refreshing.
+    try {
+      if ((await $.ui.panes()).some(p => p.id === PANE)) {
+        await refresh($)
+        startPolling($)
+      }
+    } catch {}
     return started
   })
 
@@ -126,6 +164,12 @@ export const register: Register = on => {
   })
 
   on('classic.SessionStart', async ($, e, next) => {
+    // /clear ends the session and starts a new one without session.start.
+    if (!me && reportsFrom !== undefined && (e.source === 'clear' || e.source === 'resume')) {
+      await begin($, reportsFrom)
+      const id = await $.session.id()
+      await update($, selfId, () => id)
+    }
     if (e.session_title) {
       titleFromHost = e.session_title
       if (me) {
@@ -163,6 +207,8 @@ export const register: Register = on => {
   )
 
   on('prompt.submit', async ($, e, next) => {
+    // Notices, delivery receipts and slash commands are not the person answering.
+    if (e.isMeta || e.command) return next(e)
     if (me && !me.title) me = { ...me, title: `${basename(me.cwd)}: ${e.text.slice(0, 40)}` }
     await emit($, { kind: 'prompt' })
     return next(e)
@@ -174,17 +220,21 @@ export const register: Register = on => {
   })
 
   on('classic.PermissionRequest', async ($, e, next) => {
-    await emit($, { kind: 'waitStart', reason: 'permission', tool: e.tool_name })
+    // A question or plan asks through this dialog too; its tool.call already says so.
+    if (!WAIT_TOOLS[e.tool_name]) await openWait($, loopOf(e.agent_id), 'permission', e.tool_name)
     return next(e)
   })
 
   on('tool.call', async ($, e, next) => {
     const reason = WAIT_TOOLS[e.tool]
+    const loop = loopOf(e.agentId)
     if (reason) {
-      await emit($, { kind: 'waitStart', reason })
-      const answered = await next(e)
-      await emit($, { kind: 'waitEnd' })
-      return answered
+      await openWait($, loop, reason)
+      try {
+        return await next(e)
+      } finally {
+        await closeWait($, loop)
+      }
     }
 
     const ran = await next(e)
@@ -198,8 +248,8 @@ export const register: Register = on => {
       const input = e as unknown as { ask?: unknown; blocked?: unknown }
       const asks = (typeof input.ask === 'string' && input.ask.trim() !== '') || input.blocked === true
       if (asks) await emit($, { kind: 'nextStepAsk' })
-    } else if (me?.status === 'waiting' && !me.isSticky) {
-      await emit($, { kind: 'waitEnd' })
+    } else {
+      await closeWait($, loop)
     }
     return ran
   })
@@ -210,9 +260,11 @@ export const register: Register = on => {
       await emit($, { kind: 'turnEnd' })
       try {
         const usage = await $.session.usage()
+        const model = await $.session.model()
+        if (!me) return done
         me = {
           ...me,
-          model: await $.session.model(),
+          model,
           contextPercent: usage.context.percent,
           costUsd: usage.cost?.usd,
           startedAt: usage.startedAt,
@@ -226,8 +278,10 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     beat?.cancel()
     stopPolling()
+    beat = undefined
     if (me) await removeEntry(storeOf($), me.id)
     me = undefined
+    taskList = undefined
     return next(e)
   })
 }

@@ -22,9 +22,44 @@ export function isEntry(x: unknown): x is Entry {
     typeof e.id === 'string' &&
     typeof e.status === 'string' &&
     STATUSES.has(e.status) &&
-    typeof e.heartbeat === 'number' &&
-    typeof e.updatedAt === 'number'
+    typeof e.title === 'string' &&
+    typeof e.cwd === 'string' &&
+    isNumber(e.heartbeat) &&
+    isNumber(e.updatedAt) &&
+    isNumber(e.startedAt)
   )
+}
+
+function isNumber(x: unknown): x is number {
+  return typeof x === 'number' && Number.isFinite(x)
+}
+
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+// An entry as the pane can draw it: optional fields of the wrong type dropped,
+// text on one line.
+function sanitize(e: Entry): Entry {
+  const out: Entry = { ...e, title: oneLine(e.title) }
+  for (const key of ['waitingSince', 'contextPercent', 'costUsd', 'lastTurnEndedAt'] as const) {
+    if (out[key] !== undefined && !isNumber(out[key])) delete out[key]
+  }
+  for (const key of ['waitTool', 'model'] as const) {
+    if (out[key] !== undefined && typeof out[key] !== 'string') delete out[key]
+  }
+  if (out.waitLoops !== undefined && !(Array.isArray(out.waitLoops) && out.waitLoops.every(l => typeof l === 'string'))) {
+    delete out.waitLoops
+  }
+  const t = out.tasks as unknown as { done?: unknown; total?: unknown; current?: unknown } | undefined
+  if (t !== undefined) {
+    if (typeof t !== 'object' || t === null || !isNumber(t.done) || !isNumber(t.total) || typeof t.current !== 'string') {
+      delete out.tasks
+    } else {
+      out.tasks = { done: t.done, total: t.total, current: oneLine(t.current) }
+    }
+  }
+  return out
 }
 
 export async function writeEntry(store: StoreLike, entry: Entry): Promise<void> {
@@ -40,17 +75,20 @@ export async function readEntries(store: StoreLike): Promise<Entry[]> {
   for (const key of await store.keys()) {
     if (!key.startsWith(KEY_PREFIX)) continue
     const value = await store.get(key)
-    if (isEntry(value)) out.push(value)
+    if (isEntry(value)) out.push(sanitize(value))
   }
   return out
 }
 
 // Drops entries whose heartbeat is older than a day; answers how many.
+// Unreadable session keys go too.
 export async function pruneOld(store: StoreLike, now: number): Promise<number> {
   let dropped = 0
-  for (const e of await readEntries(store)) {
-    if (e.heartbeat < now - PRUNE_MS) {
-      await removeEntry(store, e.id)
+  for (const key of await store.keys()) {
+    if (!key.startsWith(KEY_PREFIX)) continue
+    const value = await store.get(key)
+    if (!isEntry(value) || value.heartbeat < now - PRUNE_MS) {
+      await store.delete(key)
       dropped++
     }
   }

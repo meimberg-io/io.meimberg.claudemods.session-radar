@@ -12,6 +12,8 @@ export type Entry = {
   // The tool a permission prompt is for.
   waitTool?: string
   waitingSince?: number
+  // The loops ('' for main, else the agent id) with a permission, question or plan open.
+  waitLoops?: string[]
   // A next-step question outlives the turn's end, until the next prompt.
   isSticky?: boolean
   tasks?: Tasks
