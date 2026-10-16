@@ -57,7 +57,8 @@ function loopOf(agentId: string | undefined): string {
 }
 
 async function openWait($: EngineInterface, loop: string, reason: 'permission' | 'question' | 'plan', tool?: string): Promise<void> {
-  await emit($, { kind: 'waitStart', reason, tool }, open => [...open, loop])
+  // One loop asks one thing at a time: the check and the permission hook may both report it.
+  await emit($, { kind: 'waitStart', reason, tool }, open => (open.includes(loop) ? open : [...open, loop]))
 }
 
 // A tool call of `loop` resolved: the wait it held is over; the session goes
@@ -233,6 +234,14 @@ export const register: Register = on => {
     // A question or plan asks through this dialog too; its tool.call already says so.
     if (!WAIT_TOOLS[e.tool_name]) await openWait($, loopOf(e.agent_id), 'permission', e.tool_name)
     return next(e)
+  })
+
+  // The desktop app asks through its own dialog, past classic.PermissionRequest:
+  // the engine's 'ask' verdict is the signal that reaches every surface.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (verdict.decision === 'ask' && !WAIT_TOOLS[e.tool]) await openWait($, loopOf(e.agentId), 'permission', e.tool)
+    return verdict
   })
 
   on('tool.call', async ($, e, next) => {

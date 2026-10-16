@@ -3,12 +3,14 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 // What a tool call answers beneath the plugin; a test may swap it.
+let checkAnswer = 'allow'
 let toolAnswer: (e: { tool: string }) => Promise<unknown> = async () => ({ result: 'ok' })
 
 let sessionId = 'sess-1'
 
 async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', stored: Record<string, unknown> = {}) {
   toolAnswer = async () => ({ result: 'ok' })
+  checkAnswer = 'allow'
   sessionId = 'sess-1'
   mock.store(on, stored)
   mock.clock(on, { now: Date.parse('2026-10-16T12:00:00Z') })
@@ -25,6 +27,7 @@ async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', s
   on('turn.complete', async () => ({ text: '' }) as never)
   on('turn.start', async (_$, e) => ({ turnId: e.turnId }) as never)
   on('tool.call', async (_$, e) => (await toolAnswer(e)) as never)
+  on('tool.check', async () => ({ decision: checkAnswer }) as never)
   await $.session.start({ source: 'startup', cwd: '/repo', surface, isInteractive: surface !== null } as never)
 }
 
@@ -156,4 +159,31 @@ test('a respawned worker without a surface keeps reporting a session it reported
   await start($, on, null, { 'session:sess-1': before })
   await $.prompt.submit({ text: 'weiter' } as never)
   expect(await dump($)).toMatch(/^sess-1 · working/m)
+})
+
+test('a tool the engine will ask about makes the session wait until it ran', async ($, on) => {
+  await start($, on)
+  await $.prompt.submit({ text: 'ls ~' } as never)
+  checkAnswer = 'ask'
+  await $.tool.check({ tool: 'Bash', input: { command: 'ls ~' } } as never)
+  expect(await dump($)).toMatch(/· waiting · permission · Bash/)
+  await $.tool.call({ tool: 'Bash', command: 'ls ~' } as never)
+  expect(await dump($)).toMatch(/· working/)
+})
+
+test('an ask seen twice, by check and by the permission hook, ends with one run', async ($, on) => {
+  await start($, on)
+  await $.prompt.submit({ text: 'ls ~' } as never)
+  checkAnswer = 'ask'
+  await $.tool.check({ tool: 'Bash', input: {} } as never)
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: {} } as never)
+  await $.tool.call({ tool: 'Bash', command: 'ls ~' } as never)
+  expect(await dump($)).toMatch(/· working/)
+})
+
+test('an allowed tool does not wait', async ($, on) => {
+  await start($, on)
+  await $.prompt.submit({ text: 'read' } as never)
+  await $.tool.check({ tool: 'Read', input: {} } as never)
+  expect(await dump($)).toMatch(/· working/)
 })
