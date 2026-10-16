@@ -65,3 +65,25 @@ test("a subagent's permission prompt makes the session wait", async ($, on) => {
   await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: {}, agent_id: 'sub-1' } as never)
   expect(await dump($)).toMatch(/· waiting · permission · Bash/)
 })
+
+test('the task list of the session shows as done/total', async ($, on) => {
+  await start($, on)
+  await $.prompt.submit({ text: 'plan it' } as never)
+  await $.tool.call({
+    tool: 'mcp__ccd_turn__update_plan',
+    items: [
+      { content: 'One', status: 'in_progress' },
+      { content: 'Two', status: 'pending' },
+    ],
+  } as never)
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', advance: true } as never)
+  expect(await dump($)).toMatch(/· working · - · - · 1\/2$/m)
+})
+
+test("a subagent's own todo list leaves the session's progress alone", async ($, on) => {
+  await start($, on)
+  await $.prompt.submit({ text: 'plan it' } as never)
+  await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'Mine', status: 'pending' }] } as never)
+  await $.tool.call({ tool: 'TodoWrite', agentId: 'sub-1', todos: [{ content: 'A', status: 'completed' }, { content: 'B', status: 'pending' }] } as never)
+  expect(await dump($)).toMatch(/ · 0\/1$/m)
+})

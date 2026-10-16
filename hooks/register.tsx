@@ -4,6 +4,8 @@ import type { Entry, Signal } from '../types'
 import { pruneOld, readEntries, removeEntry, writeEntry } from './channel'
 import type { StoreLike } from './channel'
 import { applySignal } from './status'
+import { applyTaskCall, summarize } from './tasks'
+import type { TaskList } from './tasks'
 
 const HEARTBEAT_MS = 30_000
 const WAIT_TOOLS: Record<string, 'question' | 'plan'> = { AskUserQuestion: 'question', ExitPlanMode: 'plan' }
@@ -13,6 +15,7 @@ const WRAP_UP = 'mcp__ccd_turn__wrap_up'
 let me: Entry | undefined
 let titleFromHost: string | undefined
 let beat: Timer | undefined
+let taskList: TaskList | undefined
 
 // The engine wants $ spelled out at each call, so the channel gets $.store this way.
 export function storeOf($: EngineInterface): StoreLike {
@@ -68,7 +71,8 @@ async function begin($: EngineInterface, cwd: string): Promise<void> {
 }
 
 function dumpLine(e: Entry): string {
-  return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-'].join(' · ')
+  const tasks = e.tasks ? [`${e.tasks.done}/${e.tasks.total}`] : []
+  return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-', ...tasks].join(' · ')
 }
 
 function basename(path: string): string {
@@ -134,6 +138,12 @@ export const register: Register = on => {
     }
 
     const ran = await next(e)
+    const list = e.agentId === undefined ? applyTaskCall(taskList, e.tool, e) : taskList
+    if (list !== taskList && list && me) {
+      taskList = list
+      me = { ...me, tasks: summarize(list) }
+      await save($)
+    }
     if (e.tool === WRAP_UP) {
       const input = e as unknown as { ask?: unknown; blocked?: unknown }
       const asks = (typeof input.ask === 'string' && input.ask.trim() !== '') || input.blocked === true
