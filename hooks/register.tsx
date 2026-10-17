@@ -24,6 +24,11 @@ let titleFromHost: string | undefined
 let beat: Timer | undefined
 let taskList: TaskList | undefined
 let poll: Timer | undefined
+// The session's permission mode as the classic hook events last carried it.
+let mode: string | undefined
+// Modes where an 'ask' puts a dialog in front of the person; in auto a
+// classifier settles it, in bypassPermissions and dontAsk nobody is asked.
+const ASKING_MODES = new Set(['default', 'acceptEdits', 'plan'])
 // Remembered across a /clear, which ends the session without a session.start.
 let reportsFrom: string | undefined
 
@@ -148,9 +153,24 @@ function dumpLine(e: Entry): string {
   return [e.id, e.status, e.waitReason ?? '-', e.waitTool ?? '-', ...tasks].join(' · ') + ` — ${e.title}` + (e.hostId ? ` [${e.hostId}]` : '')
 }
 
-// The fallback title, from the first prompt, once.
+// What a turn's text names: a slash command by its name, a system notice
+// (<task-notification>, <system-reminder>, ...) nothing.
+export function nameOf(text: string): string {
+  const t = text.trim()
+  const command = /^<command-message>([^<]+)<\/command-message>/.exec(t)
+  if (command) return `/${command[1]!.trim()}`
+  if (t.startsWith('<')) return ''
+  return t.slice(0, 40)
+}
+
+// The fallback title, from the first prompt that names something, once.
 function nameFrom(text: string): void {
-  if (me && !me.title && text.trim() !== '') me = { ...me, title: `${basename(me.cwd)}: ${text.trim().slice(0, 40)}` }
+  const name = nameOf(text)
+  if (me && !me.title && name !== '') me = { ...me, title: `${basename(me.cwd)}: ${name}` }
+}
+
+function noteMode(e: { permission_mode?: string }): void {
+  if (typeof e.permission_mode === 'string') mode = e.permission_mode
 }
 
 function basename(path: string): string {
@@ -184,6 +204,7 @@ export const register: Register = on => {
   })
 
   on('classic.SessionStart', async ($, e, next) => {
+    noteMode(e)
     // /clear ends the session and starts a new one without session.start.
     if (!me && reportsFrom !== undefined && (e.source === 'clear' || e.source === 'resume')) {
       await begin($, reportsFrom)
@@ -231,7 +252,9 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     // Notices, delivery receipts and slash commands are not the person answering.
-    if (e.isMeta || e.command) return next(e)
+    // Older engines lack these fields: read them loosely.
+    const meta = e as { isMeta?: unknown; command?: unknown }
+    if (meta.isMeta || meta.command) return next(e)
     nameFrom(e.text)
     await emit($, { kind: 'prompt' })
     return next(e)
@@ -254,8 +277,19 @@ export const register: Register = on => {
   // the engine's 'ask' verdict is the signal that reaches every surface.
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
-    if (verdict.decision === 'ask' && !WAIT_TOOLS[e.tool]) await openWait($, loopOf(e.agentId), 'permission', e.tool)
+    const asksPerson = mode === undefined || ASKING_MODES.has(mode)
+    if (verdict.decision === 'ask' && asksPerson && !WAIT_TOOLS[e.tool]) await openWait($, loopOf((e as { agentId?: string }).agentId), 'permission', e.tool)
     return verdict
+  })
+
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    noteMode(e)
+    return next(e)
+  })
+
+  on('classic.PostToolUse', async ($, e, next) => {
+    noteMode(e)
+    return next(e)
   })
 
   on('tool.call', async ($, e, next) => {

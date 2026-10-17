@@ -22,6 +22,8 @@ async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', s
   on('session.id', async () => ({ value: sessionId }) as never)
   on('session.end', async () => ({ sessionId }) as never)
   on('classic.SessionStart', async () => ({}) as never)
+  on('classic.UserPromptSubmit', async () => ({}) as never)
+  on('classic.PostToolUse', async () => ({}) as never)
   on('ui.panes', async () => ({ value: [] }) as never)
   on('session.attach', async (_$, e) => ({ clientId: e.clientId }) as never)
   on('ui.open', async (_$, e) => {
@@ -229,4 +231,46 @@ test('a respawn of a session that reported before does not reopen a closed pane'
   const before = { v: 1, id: 'sess-1', title: 'repo: x', cwd: '/repo', status: 'idle', startedAt: 1, updatedAt: 1, heartbeat: Date.parse('2026-10-16T11:59:00Z') }
   await start($, on, 'desktop', { 'session:sess-1': before })
   expect(opened).toEqual([])
+})
+
+test('in auto mode an ask is settled by the classifier, nobody waits', async ($, on) => {
+  await start($, on)
+  await $.classic.SessionStart({ source: 'startup', permission_mode: 'auto' } as never)
+  await $.prompt.submit({ text: 'run tests' } as never)
+  checkAnswer = 'ask'
+  await $.tool.check({ tool: 'Bash', input: {} } as never)
+  expect(await dump($)).toMatch(/· working/)
+})
+
+test('switching back to default mode makes an ask wait again', async ($, on) => {
+  await start($, on)
+  await $.classic.SessionStart({ source: 'startup', permission_mode: 'auto' } as never)
+  await $.classic.UserPromptSubmit({ prompt: 'x', permission_mode: 'default' } as never)
+  await $.prompt.submit({ text: 'x' } as never)
+  checkAnswer = 'ask'
+  await $.tool.check({ tool: 'Bash', input: {} } as never)
+  expect(await dump($)).toMatch(/· waiting · permission · Bash/)
+})
+
+test('bypass mode never waits on an ask', async ($, on) => {
+  await start($, on)
+  await $.classic.PostToolUse({ tool_name: 'Read', tool_input: {}, tool_response: {}, tool_use_id: 't', permission_mode: 'bypassPermissions' } as never)
+  await $.prompt.submit({ text: 'x' } as never)
+  checkAnswer = 'ask'
+  await $.tool.check({ tool: 'Bash', input: {} } as never)
+  expect(await dump($)).toMatch(/· working/)
+})
+
+test('a turn opened by a system notice gives no title, the next real prompt does', async ($, on) => {
+  await start($, on)
+  await $.turn.start({ text: '<task-notification>\n<task-id>x</task-id>', turnId: 't1' } as never)
+  expect(await dump($)).toMatch(/— +\[local/m)
+  await $.turn.start({ text: 'Echte Frage', turnId: 't2' } as never)
+  expect(await dump($)).toMatch(/— repo: Echte Frage \[/m)
+})
+
+test('a slash command names the session by the command', async ($, on) => {
+  await start($, on)
+  await $.turn.start({ text: '<command-message>meimberg-io-leafcutter:resolve-issue</command-message>\n<command-name>/x</command-name>', turnId: 't1' } as never)
+  expect(await dump($)).toMatch(/— repo: \/meimberg-io-leafcutter:resolve-issue \[/m)
 })
