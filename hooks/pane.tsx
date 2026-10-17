@@ -1,7 +1,7 @@
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
 import type { Entry, Status, WaitReason } from '../types'
-import { CARD_H, MARK_W, TILES_H, cardOf, cardSvg, tilesSvg } from './cards'
+import { CARD_H, TILES_H, cardOf, cardSvg, tilesSvg } from './cards'
 import { HOST_ID } from './channel'
 import { groupRoster } from './roster'
 import type { Row } from './roster'
@@ -83,10 +83,24 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
     `${waitText(r)} · seit ${minutes(now - (r.waitingSince ?? r.updatedAt))}` +
     (r.isStale ? ` · keine Rückmeldung seit ${minutes(now - r.heartbeat)}` : '')
   const isEmpty = g.waiting.length + g.working.length + g.idle.length === 0
-  const openButton = (r: Row) =>
-    r.hostId && r.id !== self && HOST_ID.test(r.hostId) ? (
-      <Button key={`open-${r.id}`} label="Öffnen ↗" plain onPress={() => data.onOpen(r.hostId!)} />
-    ) : null
+  // The title line: status glyph and title, the link into the session where
+  // there is one to jump to; underlined while the pointer is on it.
+  const titleLine = (r: Row) => {
+    const glyph = <Text color={COLOR[r.status]}>{GLYPH[r.status]} </Text>
+    const title = <Text bold>{titleOf(r)}</Text>
+    const hostId = r.hostId
+    return hostId && r.id !== self && HOST_ID.test(hostId) ? (
+      <Box key={`line-${r.id}`} flexDirection="row">
+        {glyph}
+        <Button key={`open-${r.id}`} label={titleOf(r)} plain hover={{ scope: `title-${r.id}`, underline: true }} dimColor={r.isStale || undefined} onPress={() => data.onOpen(hostId)} />
+      </Box>
+    ) : (
+      <Text key={`title-${r.id}`} wrap="truncate-end" dimColor={r.isStale}>
+        {glyph}
+        {title}
+      </Text>
+    )
+  }
   const toggle = g.idle.length > 0 && (
     <Button key="done-toggle" label={`${isOpen ? '▾' : '▸'} Fertig · ${g.idle.length}`} plain onPress={data.onToggleDone} />
   )
@@ -96,17 +110,12 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
     const W = Math.max(240, Math.min(900, (data.columns || 40) * 8 - 8))
     const card = (r: Row) => {
       const sub = r.status === 'waiting' ? waitLine(r) : r.model ?? ''
-      const c = cardOf(r, sub, statsOf(r).join(' · '), titleOf(r))
+      const c = cardOf(r, sub, statsOf(r).join(' · '))
       const alt = [titleOf(r), sub, c.steps, c.stats].filter(Boolean).join(', ')
-      const open = openButton(r)
       return (
         <Box key={r.id} flexDirection="column">
+          {titleLine(r)}
           <Svg source={cardSvg(W, c)} alt={alt} width={W} height={CARD_H} />
-          {open && (
-            <Box position="absolute" top={2} right={MARK_W}>
-              {open}
-            </Box>
-          )}
         </Box>
       )
     }
@@ -139,11 +148,7 @@ export function paneTree(els: Elements[keyof Elements], data: PaneData): RenderE
     const meta = [r.model, ...statsOf(r)].filter(Boolean)
     return (
       <Box key={r.id} flexDirection="column" marginBottom={1}>
-        <Text wrap="truncate-end" dimColor={r.isStale}>
-          <Text color={COLOR[r.status]}>{GLYPH[r.status]} </Text>
-          <Text bold>{titleOf(r)}</Text>
-        </Text>
-        {openButton(r)}
+        {titleLine(r)}
         {r.status === 'waiting' && (
           <Text wrap="truncate-end" color={r.isStale ? undefined : COLOR.waiting} dimColor={r.isStale}>
             {'  '}

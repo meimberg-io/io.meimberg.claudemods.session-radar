@@ -5,12 +5,14 @@ import type { Row } from './roster'
 // for the surface's Svg element. Pure; light and dark through the SVG's own
 // media query. Laid out after savvy-progress's agents panel.
 
-export const CARD_H = 66
+// The title sits above the card, as the link to the session; the card holds the rest.
+export const CARD_H = 50
 export const TILES_H = 44
 
 const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif"
 const COLOR: Record<Status, string> = { waiting: '#e8a33d', working: '#8f8cf4', idle: '#5fbf8f' }
-const ICON_W = 28
+// Under the title's text, past its status glyph.
+const TEXT_X = 16
 export const MARK_W = 22
 
 const CSS = `<style>
@@ -67,15 +69,7 @@ export function tilesSvg(W: number, tiles: readonly { label: string; value: stri
   return svg(W, TILES_H, body)
 }
 
-function icon(status: Status, cx: number, cy: number): string {
-  const c = COLOR[status]
-  if (status === 'waiting') return `<rect x="${cx - 6}" y="${cy - 6}" width="12" height="12" rx="2" fill="${c}" transform="rotate(45 ${cx} ${cy})"/>`
-  if (status === 'working') return `<circle cx="${cx}" cy="${cy}" r="6" fill="${c}"/>`
-  return `<circle cx="${cx}" cy="${cy}" r="8" fill="${c}" opacity=".18"/><path d="M${cx - 4} ${cy} l3 3 l5 -6" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`
-}
-
 export type Card = {
-  title: string
   // The line under the title: what it waits for, or the model.
   sub: string
   isSubColored: boolean
@@ -90,27 +84,25 @@ export type Card = {
 
 export function cardSvg(W: number, c: Card): string {
   const color = COLOR[c.status]
-  const textW = W - ICON_W - MARK_W
+  const textW = W - TEXT_X - MARK_W
   const statsW = textWidth(c.stats, 11)
   const stepsW = Math.max(0, textW - statsW - 12)
   const fillW = Math.round(textW * Math.max(0, Math.min(1, c.progress ?? 0)))
   const sub = c.isSubColored ? `fill="${color}"` : 'class="s"'
   const body = `<g${c.isStale ? ' opacity=".5"' : ''}>
-${icon(c.status, 10, 22)}
-<text class="t" x="${ICON_W}" y="18" font-family="${FONT}" font-size="13" font-weight="600">${xml(fit(c.title, 13, textW))}</text>
-<text ${sub} x="${ICON_W}" y="34" font-family="${FONT}" font-size="11">${xml(fit(c.sub, 11, textW))}</text>
-${c.steps && stepsW > 30 ? `<text class="t" x="${ICON_W}" y="49" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${xml(fit(c.steps, 11, stepsW))}</text>` : ''}
-<text class="s" x="${ICON_W + textW}" y="49" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${xml(c.stats)}</text>
-<rect class="k" x="${ICON_W}" y="55" width="${textW}" height="4" rx="2"/>${fillW > 0 ? `<rect x="${ICON_W}" y="55" width="${fillW}" height="4" rx="2" fill="${color}"/>` : ''}
+<text ${sub} x="${TEXT_X}" y="13" font-family="${FONT}" font-size="11">${xml(fit(c.sub, 11, textW))}</text>
+${c.steps && stepsW > 30 ? `<text class="t" x="${TEXT_X}" y="29" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${xml(fit(c.steps, 11, stepsW))}</text>` : ''}
+<text class="s" x="${TEXT_X + textW}" y="29" text-anchor="end" font-family="${FONT}" font-size="11" font-variant-numeric="tabular-nums">${xml(c.stats)}</text>
+<rect class="k" x="${TEXT_X}" y="36" width="${textW}" height="4" rx="2"/>${fillW > 0 ? `<rect x="${TEXT_X}" y="36" width="${fillW}" height="4" rx="2" fill="${color}"/>` : ''}
 </g>
 <line class="ln" x1="0" y1="${CARD_H - 0.5}" x2="${W}" y2="${CARD_H - 0.5}"/>`
   return svg(W, CARD_H, body)
 }
 
 // What a card shows of a session row.
-export function cardOf(r: Row, sub: string, stats: string, title: string): Card {
+export function cardOf(r: Row, sub: string, stats: string): Card {
   const steps = r.status === 'working' && r.tasks && r.tasks.total > 0 ? `${r.tasks.done}/${r.tasks.total}${r.tasks.current ? ' · ' + r.tasks.current : ''}` : ''
   const progress =
     r.status === 'idle' ? 1 : r.status === 'waiting' ? 1 : r.tasks && r.tasks.total > 0 ? r.tasks.done / r.tasks.total : null
-  return { title, sub, isSubColored: r.status === 'waiting', steps, stats, progress, status: r.status, isStale: r.isStale }
+  return { sub, isSubColored: r.status === 'waiting', steps, stats, progress, status: r.status, isStale: r.isStale }
 }

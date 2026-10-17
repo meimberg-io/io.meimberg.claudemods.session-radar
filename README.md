@@ -43,7 +43,7 @@ offene Sessions brauchen einen Neustart. `git pull` im Klon aktualisiert den Mod
 ## Bedienung
 
 - Das Panel öffnet sich in jeder neuen Session von selbst als Tab rechts.
-- **Öffnen ↗** auf einer Karte springt in der Desktop-App in diese Session.
+- Ein Klick auf den Titel einer Karte springt in der Desktop-App in diese Session.
 - `/radar` öffnet das Panel wieder oder holt es nach vorn.
 - `/radar dump` listet die gemeldeten Einträge als Text (zur Fehlersuche).
 

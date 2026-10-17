@@ -129,12 +129,15 @@ test('desktop: tiles and one card per shown session, drawn as Svg', async ($, on
   for (const s of svgs) expect(String(s.props.source)).toMatch(/^<svg /)
 })
 
-test('desktop: text in a card is escaped', async ($, on) => {
-  await open($, on, { 'session:x': entry({ id: 'x', title: 'a <b> & "c"', status: 'working' }) })
+test('desktop: text in a card is escaped, the title link keeps it verbatim', async ($, on) => {
+  await open($, on, { 'session:x': entry({ id: 'x', title: 'a <b> & "c"', status: 'idle', model: 'm <i> & "j"', hostId: 'local_cc-33' }) })
   const ui = await mount($, 'desktop')
+  await ui.press({ key: 'done-toggle' })
   const source = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.source)).join('')
-  expect(source).toContain('a &lt;b&gt; &amp; &quot;c&quot;')
-  expect(source).not.toContain('<b>')
+  expect(source).toContain('m &lt;i&gt; &amp; &quot;j&quot;')
+  expect(source).not.toContain('<i>')
+  expect((await ui.find({ key: 'open-x' }))?.props.label).toBe('a <b> & "c"')
+  await ui.unmount()
 })
 
 test('terminal: no Svg is drawn', async ($, on) => {
@@ -153,5 +156,26 @@ test('desktop: status icons do not pulse', async ($, on) => {
   const ui = await mount($, 'desktop')
   const source = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.source)).join('')
   expect(source).not.toMatch(/animation|class="live"/)
+  await ui.unmount()
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: the title is the link, no separate open button`, async ($, on) => {
+    await open($, on)
+    const ui = await mount($, surface)
+    const link = await ui.find({ key: 'open-w' })
+    expect(link?.type).toBe('Button')
+    expect(JSON.stringify(link)).toContain('Wartende Session')
+    // The hover sits beside the props, where the test kit does not show it: checked live.
+    expect(await ui.find({ text: /Öffnen/ })).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
+test('desktop: the card drawing leaves the title to the link', async ($, on) => {
+  await open($, on)
+  const ui = await mount($, 'desktop')
+  const source = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.source)).join('')
+  expect(source).not.toContain('Wartende Session')
   await ui.unmount()
 })
