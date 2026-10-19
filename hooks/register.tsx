@@ -5,6 +5,8 @@ import type { Entry, Signal } from '../types'
 import { HOST_ID, KEY_PREFIX, isEntry, pruneOld, readEntries, removeEntry, writeEntry } from './channel'
 import type { StoreLike } from './channel'
 import { PANE, PANE_TITLE, paneTree } from './pane'
+import { createLog } from './log'
+import type { FsLike, Log } from './log'
 import { applySignal } from './status'
 import { applyTaskCall, summarize } from './tasks'
 import type { TaskList } from './tasks'
@@ -32,6 +34,24 @@ const ASKING_MODES = new Set(['default', 'acceptEdits', 'plan'])
 // Remembered across a /clear, which ends the session without a session.start.
 let reportsFrom: string | undefined
 
+// The measuring log: what each session saw, one file per session id, plus
+// the marks the person sets with /radar mark.
+let logger: Log | undefined
+let logDir = ''
+let logId = ''
+
+function fsOf($: EngineInterface): FsLike {
+  return { read: path => $.fs.read(path) as Promise<string>, write: (path, text) => $.fs.write(path, text) }
+}
+
+function note(k: string, fields: Record<string, unknown> = {}): void {
+  if (logger && logDir && logId) logger.add(`${logDir}/${logId}.jsonl`, { t: new Date().toISOString(), k, ...fields })
+}
+
+function short(text: unknown): string {
+  return typeof text === 'string' ? text.replace(/\s+/g, ' ').trim().slice(0, 60) : ''
+}
+
 // The engine wants $ spelled out at each call, so the channel gets $.store this way.
 export function storeOf($: EngineInterface): StoreLike {
   return {
@@ -52,8 +72,12 @@ async function emit($: EngineInterface, signal: Signal, loops?: (open: string[])
   const now = await $.clock.now()
   if (!me) return
   const open = loops ? loops(me.waitLoops ?? []) : me.waitLoops ?? []
+  const before = me
   const next = applySignal(me, signal, now)
   me = { ...next, waitLoops: next.status === 'waiting' ? open : [] }
+  if (before.status !== me.status || before.waitReason !== me.waitReason) {
+    note('status', { from: before.status, to: me.status, reason: me.waitReason, tool: me.waitTool, by: signal.kind, loops: me.waitLoops })
+  }
   await save($)
 }
 
@@ -104,6 +128,8 @@ async function begin($: EngineInterface, cwd: string): Promise<void> {
     ? { ...left, cwd, heartbeat: now, hostId }
     : { v: 1, id, title: titleFromHost ?? '', cwd, status: 'idle', startedAt: now, updatedAt: now, heartbeat: now, hostId }
   reportsFrom = cwd
+  // After /clear the session goes on under a new id, and so does its log.
+  logId = me.id
   await pruneOld(storeOf($), now)
   await save($)
   // A new session opens the pane, whichever way it starts reporting (start,
@@ -170,7 +196,10 @@ function nameFrom(text: string): void {
 }
 
 function noteMode(e: { permission_mode?: string }): void {
-  if (typeof e.permission_mode === 'string') mode = e.permission_mode
+  if (typeof e.permission_mode === 'string' && e.permission_mode !== mode) {
+    note('mode', { from: mode, to: e.permission_mode })
+    mode = e.permission_mode
+  }
 }
 
 function basename(path: string): string {
@@ -183,6 +212,10 @@ export const register: Register = on => {
     await $.command.register({ name: 'radar', description: 'Open the Session Radar pane' })
     const id = await $.session.id()
     await update($, selfId, () => id)
+    logDir = `${(await $.env.get('HOME')) ?? ''}/.claude/session-radar-log`
+    logId = id
+    logger = createLog(fsOf($))
+    note('session.start', { source: (e as { source?: unknown }).source, surface: e.surface, isInteractive: e.isInteractive, host: await $.env.get('CLAUDE_CODE_HOST_SESSION_ID') })
     // A respawned worker or a reload may start without a surface; an entry this
     // session left says it was interactive.
     const left = await $.store.get(KEY_PREFIX + id)
@@ -199,11 +232,13 @@ export const register: Register = on => {
 
   on('session.attach', async ($, e, next) => {
     const attached = await next(e)
+    note('session.attach', { surface: e.surface })
     await begin($, await $.session.cwd())
     return attached
   })
 
   on('classic.SessionStart', async ($, e, next) => {
+    note('classic.SessionStart', { source: e.source, mode: e.permission_mode, title: e.session_title })
     noteMode(e)
     // /clear ends the session and starts a new one without session.start.
     if (!me && reportsFrom !== undefined && (e.source === 'clear' || e.source === 'resume')) {
@@ -222,7 +257,16 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'radar' }, async ($, e) => {
-    if (e.args.trim() === 'dump') {
+    const args = e.args.trim()
+    if (args === 'mark' || args.startsWith('mark ')) {
+      const text = args.slice(4).trim()
+      const entries = await readEntries(storeOf($))
+      logger?.add(`${logDir}/marks.jsonl`, { t: new Date().toISOString(), note: text, by: logId, mode, entries })
+      await logger?.idle()
+      return { text: `Markiert${text ? `: ${text}` : ''}. Logs: ${logDir}` }
+    }
+    if (args === 'dump') {
+      await logger?.idle()
       const list = await readEntries(storeOf($))
       return { text: list.length === 0 ? 'Keine Sessions gemeldet.' : list.map(dumpLine).join('\n') }
     }
@@ -254,6 +298,7 @@ export const register: Register = on => {
     // Notices, delivery receipts and slash commands are not the person answering.
     // Older engines lack these fields: read them loosely.
     const meta = e as { isMeta?: unknown; command?: unknown }
+    note('prompt.submit', { isMeta: meta.isMeta, command: meta.command, text: short(e.text) })
     if (meta.isMeta || meta.command) return next(e)
     nameFrom(e.text)
     await emit($, { kind: 'prompt' })
@@ -262,6 +307,7 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     // The desktop app may start a turn without a prompt.submit the mod sees.
+    note('turn.start', { text: short(e.text) })
     nameFrom(e.text)
     await emit($, { kind: 'turnStart' })
     return next(e)
@@ -269,6 +315,7 @@ export const register: Register = on => {
 
   on('classic.PermissionRequest', async ($, e, next) => {
     // A question or plan asks through this dialog too; its tool.call already says so.
+    note('classic.PermissionRequest', { tool: e.tool_name, agent: e.agent_id, mode: e.permission_mode })
     if (!WAIT_TOOLS[e.tool_name]) await openWait($, loopOf(e.agent_id), 'permission', e.tool_name)
     return next(e)
   })
@@ -278,6 +325,7 @@ export const register: Register = on => {
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
     const asksPerson = mode === undefined || ASKING_MODES.has(mode)
+    note('tool.check', { tool: e.tool, agent: (e as { agentId?: string }).agentId, id: e.tool_use_id, decision: verdict.decision, mode })
     if (verdict.decision === 'ask' && asksPerson && !WAIT_TOOLS[e.tool]) await openWait($, loopOf((e as { agentId?: string }).agentId), 'permission', e.tool)
     return verdict
   })
@@ -292,19 +340,30 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('classic.Notification', async ($, e, next) => {
+    note('classic.Notification', { type: e.notification_type, message: short(e.message), mode: e.permission_mode })
+    return next(e)
+  })
+
   on('tool.call', async ($, e, next) => {
     const reason = WAIT_TOOLS[e.tool]
     const loop = loopOf(e.agentId)
+    const input = e as unknown as { ask?: unknown; blocked?: unknown }
+    const startedAt = Date.now()
+    note('tool.call', { phase: 'start', tool: e.tool, agent: e.agentId, id: e.tool_use_id, ...(e.tool === WRAP_UP ? { ask: short(input.ask), blocked: input.blocked } : {}) })
+    const ended = () => note('tool.call', { phase: 'end', tool: e.tool, agent: e.agentId, id: e.tool_use_id, ms: Date.now() - startedAt })
     if (reason) {
       await openWait($, loop, reason)
       try {
         return await next(e)
       } finally {
+        ended()
         await closeWait($, loop)
       }
     }
 
     const ran = await next(e)
+    ended()
     const list = e.agentId === undefined ? applyTaskCall(taskList, e.tool, e) : taskList
     if (list !== taskList && list && me) {
       taskList = list
@@ -312,7 +371,6 @@ export const register: Register = on => {
       await save($)
     }
     if (e.tool === WRAP_UP) {
-      const input = e as unknown as { ask?: unknown; blocked?: unknown }
       const asks = (typeof input.ask === 'string' && input.ask.trim() !== '') || input.blocked === true
       if (asks) await emit($, { kind: 'nextStepAsk' })
     } else {
@@ -323,6 +381,7 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
+    note('turn.complete', { agent: e.agentId, isAborted: e.isAborted })
     if (e.agentId === undefined && me) {
       await emit($, { kind: 'turnEnd' })
       try {
@@ -343,6 +402,7 @@ export const register: Register = on => {
   })
 
   on('session.end', async ($, e, next) => {
+    note('session.end', { reason: e.reason })
     beat?.cancel()
     stopPolling()
     beat = undefined

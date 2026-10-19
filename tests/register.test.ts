@@ -8,12 +8,20 @@ let checkAnswer = 'allow'
 let toolAnswer: (e: { tool: string }) => Promise<unknown> = async () => ({ result: 'ok' })
 
 let sessionId = 'sess-1'
+// The files the mod wrote, by path.
+let files: Record<string, string> = {}
 
 async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', stored: Record<string, unknown> = {}) {
   toolAnswer = async () => ({ result: 'ok' })
   checkAnswer = 'allow'
   opened = []
   sessionId = 'sess-1'
+  files = {}
+  on('fs.read', async (_$, e) => (files[e.path] !== undefined ? { value: files[e.path] } : { deny: 'missing' }) as never)
+  on('fs.write', async (_$, e) => {
+    files[e.path] = e.text
+    return { value: undefined } as never
+  })
   mock.store(on, stored)
   mock.clock(on, { now: Date.parse('2026-10-16T12:00:00Z') })
   on('session.start', async () => ({ cwd: '/repo' }) as never)
@@ -30,7 +38,7 @@ async function start($: Engine, on: On, surface: 'desktop' | null = 'desktop', s
     opened.push(e.id)
     return { value: { isPlaced: true } } as never
   })
-  mock.env(on, surface ? { CLAUDE_CODE_HOST_SESSION_ID: 'local_c400d3fe-ac97' } : {})
+  mock.env(on, surface ? { CLAUDE_CODE_HOST_SESSION_ID: 'local_c400d3fe-ac97', HOME: '/home/t' } : { HOME: '/home/t' })
   on('session.cwd', async () => ({ value: '/repo' }) as never)
   on('session.surfaces', async () => ({ value: surface ? [surface] : [] }) as never)
   on('prompt.submit', async (_$, e) => ({ text: e.text }) as never)
@@ -273,4 +281,44 @@ test('a slash command names the session by the command', async ($, on) => {
   await start($, on)
   await $.turn.start({ text: '<command-message>meimberg-io-leafcutter:resolve-issue</command-message>\n<command-name>/x</command-name>', turnId: 't1' } as never)
   expect(await dump($)).toMatch(/— repo: \/meimberg-io-leafcutter:resolve-issue \[/m)
+})
+
+const LOG = '/home/t/.claude/session-radar-log'
+
+function logOf(path: string): Record<string, unknown>[] {
+  return (files[path] ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+}
+
+test('the measuring log records what decides the status', async ($, on) => {
+  await start($, on)
+  await $.classic.SessionStart({ source: 'startup', permission_mode: 'default' } as never)
+  await $.prompt.submit({ text: 'ls ~' } as never)
+  checkAnswer = 'ask'
+  await $.tool.check({ tool: 'Bash', input: {} } as never)
+  await dump($)
+  const log = logOf(`${LOG}/sess-1.jsonl`)
+  const kinds = log.map(l => l.k)
+  for (const k of ['session.start', 'classic.SessionStart', 'prompt.submit', 'tool.check', 'status']) expect(kinds).toContain(k)
+  expect(log.find(l => l.k === 'tool.check')).toMatchObject({ tool: 'Bash', decision: 'ask', mode: 'default' })
+  expect(log.find(l => l.k === 'status' && l.to === 'waiting')).toMatchObject({ from: 'working', reason: 'permission' })
+  expect(typeof log[0]?.t).toBe('string')
+})
+
+test('a tool call is logged when it starts and when it ends', async ($, on) => {
+  await start($, on)
+  await $.tool.call({ tool: 'Read', file_path: '/x', tool_use_id: 'u1' } as never)
+  await dump($)
+  const calls = logOf(`${LOG}/sess-1.jsonl`).filter(l => l.k === 'tool.call')
+  expect(calls.map(l => l.phase)).toEqual(['start', 'end'])
+  expect(calls[1]).toMatchObject({ tool: 'Read' })
+  expect(typeof calls[1]?.ms).toBe('number')
+})
+
+test('/radar mark writes the note with a snapshot of every session', async ($, on) => {
+  await start($, on)
+  const ran = (await $.command.run({ command: 'radar', args: 'mark falsch orange' } as never)) as { text?: string }
+  expect(ran.text).toMatch(/Markiert/)
+  const [mark] = logOf(`${LOG}/marks.jsonl`)
+  expect(mark).toMatchObject({ note: 'falsch orange', by: 'sess-1' })
+  expect((mark?.entries as { id: string }[]).map(e => e.id)).toContain('sess-1')
 })

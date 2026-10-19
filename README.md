@@ -46,6 +46,18 @@ offene Sessions brauchen einen Neustart. `git pull` im Klon aktualisiert den Mod
 - Ein Klick auf den Titel einer Karte springt in der Desktop-App in diese Session.
 - `/radar` öffnet das Panel wieder oder holt es nach vorn.
 - `/radar dump` listet die gemeldeten Einträge als Text (zur Fehlersuche).
+- `/radar mark <Notiz>` hält fest, dass das Panel gerade etwas Falsches zeigt:
+  die Notiz und eine Momentaufnahme aller Sessions landen in
+  `~/.claude/session-radar-log/marks.jsonl`.
+
+## Messprotokoll
+
+Jede Session schreibt die Ereignisse, aus denen der Mod ihren Status ableitet,
+nach `~/.claude/session-radar-log/<session-id>.jsonl`, eine JSON-Zeile pro
+Ereignis, die letzten 3000 je Session: Start und Verbinden, Berechtigungsmodus,
+Prompts und Turns (Text auf 60 Zeichen gekürzt), Tool-Prüfungen mit Urteil,
+Tool-Aufrufe mit Dauer, Benachrichtigungen und jeder Statuswechsel. Die Dateien
+bleiben auf dem Rechner und dienen nur der Fehlersuche.
 
 ## Grenzen
 
